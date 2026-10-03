@@ -1,0 +1,12 @@
+{
+  "name": "zgt-app-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ZEOZ Gestión Taller para Windows y macOS",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
