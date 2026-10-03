@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ZGT</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section id="boot" class="screen screen-active" aria-live="polite">
+      <div class="brand brand-large" aria-label="ZEOZ">
+        <img src="./zeoz-logo.svg" alt="ZEOZ" />
+      </div>
+      <div class="loader" aria-hidden="true"><span></span></div>
+      <p id="boot-message" class="muted">Iniciando ZGT…</p>
+    </section>
+
+    <section id="link" class="screen" aria-labelledby="link-title">
+      <div class="link-card">
+        <div class="brand" aria-label="ZEOZ">
+          <img src="./zeoz-logo.svg" alt="ZEOZ" />
+        </div>
+
+        <h1 id="link-title">Vinculá tu taller</h1>
+        <p class="muted">Ingresá el código de vinculación de tu taller.</p>
+
+        <label class="sr-only" for="link-code">Código de vinculación</label>
+        <input
+          id="link-code"
+          type="text"
+          inputmode="text"
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="13"
+          placeholder="ZGT-XXXX-XXXX"
+        />
+
+        <p id="status" class="status" aria-live="polite"></p>
+
+        <button id="link-button" type="button">Vincular</button>
+        <p class="version">ZGT Desktop · v0.1.0</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="./main.js"></script>
+</body>
+</html>
