@@ -212,8 +212,14 @@ mod macos {
             return Err("La B1 Pro no ofrece un canal de escritura Bluetooth.".to_string());
         }
 
+        let write_type = if characteristic.properties.contains(CharPropFlags::WRITE) {
+            WriteType::WithResponse
+        } else {
+            WriteType::WithoutResponse
+        };
+
         peripheral
-            .write(characteristic, value, WriteType::WithResponse)
+            .write(characteristic, value, write_type)
             .await
             .map_err(|error| format!("No se pudo enviar un paquete a la B1 Pro: {error}"))
     }
@@ -497,10 +503,12 @@ mod macos {
             .await
             .map_err(|error| format!("No se pudieron consultar los servicios de la B1 Pro: {error}"))?;
 
+        let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
+        let characteristic_uuid = Uuid::parse_str(CHARACTERISTIC_UUID).unwrap();
         let characteristic = peripheral
             .characteristics()
             .into_iter()
-            .find(|item| item.uuid == Uuid::parse_str(CHARACTERISTIC_UUID).unwrap())
+            .find(|item| item.uuid == characteristic_uuid && item.service_uuid == service_uuid)
             .ok_or_else(|| "La impresora no expone el canal Bluetooth NIIMBOT esperado.".to_string())?;
 
         peripheral
