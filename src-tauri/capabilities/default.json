@@ -3,6 +3,14 @@
   "identifier": "default",
   "description": "Permisos de la ventana principal de ZGT Desktop",
   "windows": ["main"],
+  "remote": {
+    "urls": [
+      "https://*.zeoz.com.ar/*",
+      "https://zeoz.com.ar/*",
+      "https://*.zeoz.ar/*",
+      "https://zeoz.ar/*"
+    ]
+  },
   "permissions": [
     "core:default"
   ]
