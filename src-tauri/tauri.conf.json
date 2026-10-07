@@ -28,7 +28,8 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.13",
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "infoPlist": "Info.plist"
     },
     "windows": {
       "nsis": {
