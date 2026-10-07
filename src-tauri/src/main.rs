@@ -1,3 +1,5 @@
+mod niimbot;
+
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, time::Duration};
 use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -8,6 +10,39 @@ const CENTRAL_ENDPOINT: &str =
 
 const REMEMBER_ME_SCRIPT: &str = r#"
 (() => {
+  const invokeNative = (command, args) => {
+    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+      return window.__TAURI_INTERNALS__.invoke(command, args);
+    }
+    if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
+      return window.__TAURI__.core.invoke(command, args);
+    }
+    return Promise.reject('El puente nativo de ZGT no está disponible.');
+  };
+
+  window.__ZGTNativeNiimbotConnected = false;
+  window.ZGTNative = {
+    __desktopBridge: true,
+    appVersion: function () { return '0.1.1'; },
+    printNiimbotB1Pro: function (dataUrl) {
+      invokeNative('print_niimbot_b1_pro', { dataUrl: String(dataUrl || '') })
+        .catch(function (error) {
+          if (window.ZEOZZGTPrintNativeCallback) {
+            window.ZEOZZGTPrintNativeCallback({
+              type: 'error',
+              message: String(error || 'No se pudo imprimir.')
+            });
+          }
+        });
+    },
+    disconnectNiimbotB1Pro: function () {
+      window.__ZGTNativeNiimbotConnected = false;
+    },
+    isNiimbotB1ProConnected: function () {
+      return window.__ZGTNativeNiimbotConnected === true;
+    }
+  };
+
   const activateRememberMe = () => {
     try {
       if (!window.location.pathname.includes('/wp-login.php')) return;
@@ -166,6 +201,11 @@ fn clear_link(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[tauri::command]
+async fn print_niimbot_b1_pro(window: WebviewWindow, data_url: String) -> Result<String, String> {
+    niimbot::print_b1_pro(window, data_url).await
+}
+
 fn open_workshop(window: WebviewWindow, url: String) -> Result<(), String> {
     let base = normalize_site_url(&url)?;
     let target = Url::parse(&format!("{base}/wp-admin/"))
@@ -183,7 +223,8 @@ fn main() {
             load_link,
             save_link,
             clear_link,
-            open_workshop
+            open_workshop,
+            print_niimbot_b1_pro
         ])
         .setup(|app| {
             WebviewWindowBuilder::new(
