@@ -3,6 +3,8 @@ name: Build ZGT Desktop macOS
 on:
   push:
     branches: [ main, fix/macos-niimbot-print ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
