@@ -3,6 +3,8 @@ use std::{fs, path::PathBuf, time::Duration};
 use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
 
+mod niimbot;
+
 const CENTRAL_ENDPOINT: &str =
     "https://central.zeoz.com.ar/wp-json/gtc/v1/app/resolve";
 
@@ -26,6 +28,53 @@ const REMEMBER_ME_SCRIPT: &str = r#"
   }
 })();
 "#;
+
+#[cfg(target_os = "macos")]
+const NATIVE_BRIDGE_SCRIPT: &str = r#"
+(() => {
+  const core = window.__TAURI__ && window.__TAURI__.core;
+  if (!core || typeof core.invoke !== 'function') return;
+
+  let connected = false;
+  let callback = null;
+
+  Object.defineProperty(window, 'ZEOZZGTPrintNativeCallback', {
+    configurable: true,
+    get() { return callback; },
+    set(value) {
+      callback = function (event) {
+        const type = event && event.type;
+        if (type === 'connected') connected = true;
+        if (type === 'disconnected' || type === 'error') connected = false;
+        return value(event);
+      };
+    }
+  });
+
+  const notifyError = (error) => {
+    const message = error && error.message
+      ? error.message
+      : String(error || 'No se pudo completar la impresión Bluetooth.');
+    if (callback) callback({ type: 'error', message });
+  };
+
+  window.ZGTNative = {
+    appVersion: () => core.invoke('app_version'),
+    printNiimbotB1Pro(dataUrl) {
+      core.invoke('print_niimbot_b1_pro', { data_url: dataUrl }).catch(notifyError);
+    },
+    disconnectNiimbotB1Pro() {
+      core.invoke('disconnect_niimbot_b1_pro').catch(notifyError);
+    },
+    isNiimbotB1ProConnected() {
+      return connected;
+    }
+  };
+})();
+"#;
+
+#[cfg(not(target_os = "macos"))]
+const NATIVE_BRIDGE_SCRIPT: &str = "";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LinkState {
@@ -178,14 +227,22 @@ fn open_workshop(window: WebviewWindow, url: String) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
+        .manage(niimbot::NiimbotState::default())
         .invoke_handler(tauri::generate_handler![
             resolve_link,
             load_link,
             save_link,
             clear_link,
-            open_workshop
+            open_workshop,
+            niimbot::app_version,
+            niimbot::print_niimbot_b1_pro,
+            niimbot::disconnect_niimbot_b1_pro,
+            niimbot::is_niimbot_b1_pro_connected
         ])
         .setup(|app| {
+            let initialization_script =
+                format!("{REMEMBER_ME_SCRIPT}\\n{NATIVE_BRIDGE_SCRIPT}");
+
             WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -196,7 +253,7 @@ fn main() {
             .min_inner_size(900.0, 600.0)
             .center()
             .resizable(true)
-            .initialization_script(REMEMBER_ME_SCRIPT)
+            .initialization_script(&initialization_script)
             .build()?;
 
             Ok(())
