@@ -201,11 +201,11 @@ fn clear_link(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-#[tauri::command]
 async fn print_niimbot_b1_pro(window: WebviewWindow, data_url: String) -> Result<String, String> {
     niimbot::print_b1_pro(window, data_url).await
 }
 
+#[tauri::command]
 fn open_workshop(window: WebviewWindow, url: String) -> Result<(), String> {
     let base = normalize_site_url(&url)?;
     let target = Url::parse(&format!("{base}/wp-admin/"))
