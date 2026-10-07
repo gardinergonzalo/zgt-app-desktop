@@ -241,7 +241,7 @@ fn main() {
         ])
         .setup(|app| {
             let initialization_script =
-                format!("{REMEMBER_ME_SCRIPT}\\n{NATIVE_BRIDGE_SCRIPT}");
+                format!("{REMEMBER_ME_SCRIPT}\n{NATIVE_BRIDGE_SCRIPT}");
 
             WebviewWindowBuilder::new(
                 app,
