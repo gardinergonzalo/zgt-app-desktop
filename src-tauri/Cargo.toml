@@ -1,6 +1,6 @@
 [package]
 name = "zgt-desktop"
-version = "0.1.0"
+version = "0.1.9"
 description = "ZEOZ Gestión Taller Desktop"
 authors = ["ZEOZ"]
 edition = "2021"
@@ -14,3 +14,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 url = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+base64 = "0.22"
+btleplug = "0.11"
+futures-util = "0.3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+tokio = { version = "1", features = ["time"] }
+uuid = "1"

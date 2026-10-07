@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "zgt-macos-remote",
+  "description": "Permite que el taller ZEOZ cargado en la ventana principal use el puente nativo de impresión en macOS.",
+  "windows": ["main"],
+  "platforms": ["macOS"],
+  "remote": {
+    "urls": [
+      "https://zeoz.com.ar/**",
+      "https://*.zeoz.com.ar/**"
+    ]
+  },
+  "permissions": [
+    "core:default"
+  ]
+}
