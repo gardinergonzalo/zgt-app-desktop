@@ -1,0 +1,17 @@
+[[permission]]
+identifier = "allow-local-zgt-commands"
+description = "Permite al frontend local de ZGT usar sus comandos de vinculación y navegación."
+commands.allow = [
+  "resolve_link",
+  "load_link",
+  "save_link",
+  "clear_link",
+  "open_workshop"
+]
+
+[[permission]]
+identifier = "allow-print-niimbot-b1-pro"
+description = "Permite imprimir etiquetas en una NIIMBOT B1 Pro mediante Bluetooth nativo."
+commands.allow = [
+  "print_niimbot_b1_pro"
+]
