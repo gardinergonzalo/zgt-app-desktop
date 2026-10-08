@@ -1,6 +1,6 @@
 [package]
 name = "zgt-desktop"
-version = "0.1.3"
+version = "0.1.4"
 description = "ZEOZ Gestión Taller Desktop"
 authors = ["ZEOZ"]
 edition = "2021"
