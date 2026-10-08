@@ -340,12 +340,9 @@ fn prepare_image(data_url: &str) -> Result<Vec<u8>, String> {
 
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
-            // En macOS la B1 Pro recibe el bitmap espejado horizontalmente
-            // respecto de la imagen fuente. Invertimos X y mantenemos Y como
-            // en la v0.1.2 para corregir sólo el espejo sin tocar el protocolo.
-            let source_x = WIDTH - 1 - x;
-            let source_y = HEIGHT - 1 - y;
-            let pixel = resized.get_pixel(source_x as u32, source_y as u32);
+            // Orientación final validada para macOS:
+            // sin espejo horizontal y sin rotación de 180°.
+            let pixel = resized.get_pixel(x as u32, y as u32);
             let red = pixel[0] as u32;
             let green = pixel[1] as u32;
             let blue = pixel[2] as u32;
