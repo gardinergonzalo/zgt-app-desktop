@@ -23,7 +23,7 @@ const REMEMBER_ME_SCRIPT: &str = r#"
   window.__ZGTNativeNiimbotConnected = false;
   window.ZGTNative = {
     __desktopBridge: true,
-    appVersion: function () { return '0.1.1'; },
+    appVersion: function () { return '0.1.3'; },
     printNiimbotB1Pro: function (dataUrl) {
       invokeNative('print_niimbot_b1_pro', { dataUrl: String(dataUrl || '') })
         .catch(function (error) {
