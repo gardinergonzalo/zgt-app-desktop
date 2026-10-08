@@ -1,17 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permisos de la ventana principal de ZGT Desktop",
+  "description": "Permisos del contenido local de ZGT Desktop",
   "windows": ["main"],
-  "remote": {
-    "urls": [
-      "https://*.zeoz.com.ar/*",
-      "https://zeoz.com.ar/*",
-      "https://*.zeoz.ar/*",
-      "https://zeoz.ar/*"
-    ]
-  },
+  "local": true,
   "permissions": [
-    "core:default"
+    "core:default",
+    "allow-local-zgt-commands"
   ]
 }
