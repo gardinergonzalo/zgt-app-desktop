@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "zgt-remote-print",
+  "description": "Permite a talleres ZEOZ usar únicamente la impresión NIIMBOT nativa",
+  "windows": ["main"],
+  "local": false,
+  "remote": {
+    "urls": [
+      "https://*.zeoz.com.ar/*",
+      "https://zeoz.com.ar/*",
+      "https://*.zeoz.ar/*",
+      "https://zeoz.ar/*"
+    ]
+  },
+  "permissions": [
+    "allow-print-niimbot-b1-pro"
+  ]
+}
