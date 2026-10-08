@@ -44,6 +44,6 @@ jobs:
       - name: Upload macOS installer
         uses: actions/upload-artifact@v4
         with:
-          name: ZGT-Desktop-macOS-v0.1.2
+          name: ZGT-Desktop-macOS-v0.1.3
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
