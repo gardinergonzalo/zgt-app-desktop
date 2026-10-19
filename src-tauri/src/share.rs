@@ -71,7 +71,10 @@ mod platform {
         sync::{Arc, Mutex},
     };
     use windows::{
-        ApplicationModel::DataTransfer::{DataPackageOperation, DataTransferManager},
+        ApplicationModel::DataTransfer::{
+            DataPackageOperation, DataRequestedEventArgs, DataTransferManager,
+        },
+        Foundation::TypedEventHandler,
         Storage::{IStorageItem, StorageFile},
         Win32::{
             Foundation::HWND,
@@ -84,9 +87,15 @@ mod platform {
     struct ShareContext {
         hwnd: isize,
         interop: IDataTransferManagerInterop,
-        _manager: DataTransferManager,
-        _revoker: windows::core::EventRevoker,
-        current_file: Arc<Mutex<Option<StorageFile>>>,
+        manager: DataTransferManager,
+        data_requested_token: i64,
+        current_path: Arc<Mutex<Option<String>>>,
+    }
+
+    impl Drop for ShareContext {
+        fn drop(&mut self) {
+            let _ = self.manager.RemoveDataRequested(self.data_requested_token);
+        }
     }
 
     thread_local! {
@@ -108,57 +117,82 @@ mod platform {
         let manager: DataTransferManager = unsafe {
             interop
                 .GetForWindow(hwnd)
-                .map_err(|error| format!("Windows no pudo asociar el panel Compartir a ZGT: {error}"))?
+                .map_err(|error| format!(
+                    "Windows no pudo asociar el panel Compartir a ZGT: {error}"
+                ))?
         };
 
-        let current_file = Arc::new(Mutex::new(None::<StorageFile>));
-        let file_for_event = Arc::clone(&current_file);
+        let current_path = Arc::new(Mutex::new(None::<String>));
+        let path_for_event = Arc::clone(&current_path);
 
-        let revoker = manager
-            .DataRequested(move |_sender, args| {
-                let Ok(args) = args.ok() else { return; };
-                let Ok(request) = args.Request() else { return; };
-                let Ok(data) = request.Data() else { return; };
+        let handler =
+            TypedEventHandler::<DataTransferManager, DataRequestedEventArgs>::new(
+                move |_sender, args| {
+                    let args = args.ok()?;
+                    let request = args.Request()?;
+                    let data = request.Data()?;
 
-                let file = file_for_event
-                    .lock()
-                    .ok()
-                    .and_then(|guard| guard.clone());
+                    let path = path_for_event
+                        .lock()
+                        .ok()
+                        .and_then(|guard| guard.clone());
 
-                let Some(file) = file else {
-                    let _ = request.FailWithDisplayText(&HSTRING::from(
-                        "ZGT no pudo preparar el PDF para compartir."
-                    ));
-                    return;
-                };
+                    let Some(path) = path else {
+                        let _ = request.FailWithDisplayText(&HSTRING::from(
+                            "ZGT no pudo preparar el PDF para compartir.",
+                        ));
+                        return Ok(());
+                    };
 
-                let Ok(item) = file.cast::<IStorageItem>() else {
-                    let _ = request.FailWithDisplayText(&HSTRING::from(
-                        "Windows no pudo adjuntar el PDF."
-                    ));
-                    return;
-                };
+                    let file = match StorageFile::GetFileFromPathAsync(&HSTRING::from(path))
+                        .and_then(|operation| operation.get())
+                    {
+                        Ok(file) => file,
+                        Err(_) => {
+                            let _ = request.FailWithDisplayText(&HSTRING::from(
+                                "Windows no pudo abrir el PDF generado por ZGT.",
+                            ));
+                            return Ok(());
+                        }
+                    };
 
-                let items = IIterable::<IStorageItem>::from(vec![item]);
+                    let item = match file.cast::<IStorageItem>() {
+                        Ok(item) => item,
+                        Err(_) => {
+                            let _ = request.FailWithDisplayText(&HSTRING::from(
+                                "Windows no pudo adjuntar el PDF.",
+                            ));
+                            return Ok(());
+                        }
+                    };
 
-                if let Ok(properties) = data.Properties() {
-                    let _ = properties.SetTitle(&HSTRING::from("Compartir PDF de ZGT"));
-                    let _ = properties.SetDescription(&HSTRING::from(
-                        "Documento generado por ZEOZ Gestión Taller"
-                    ));
-                }
+                    let items = IIterable::<IStorageItem>::from(vec![item]);
 
-                let _ = data.SetRequestedOperation(DataPackageOperation::Copy);
-                let _ = data.SetStorageItemsReadOnly(&items);
-            })
-            .map_err(|error| format!("No se pudo preparar el contenido para compartir: {error}"))?;
+                    if let Ok(properties) = data.Properties() {
+                        let _ = properties.SetTitle(&HSTRING::from("Compartir PDF de ZGT"));
+                        let _ = properties.SetDescription(&HSTRING::from(
+                            "Documento generado por ZEOZ Gestión Taller",
+                        ));
+                    }
+
+                    data.SetRequestedOperation(DataPackageOperation::Copy)?;
+                    data.SetStorageItemsReadOnly(&items)?;
+                    Ok(())
+                },
+            );
+
+        let token = manager
+            .DataRequested(&handler)
+            .map_err(|error| format!(
+                "No se pudo preparar el contenido para compartir: {error}"
+            ))?;
 
         Ok(ShareContext {
             hwnd: hwnd_value,
             interop,
-            _manager: manager,
-            _revoker: revoker,
-            current_file,
+            manager,
+            data_requested_token: token,
+            current_path,
         })
     }
 
@@ -169,11 +203,6 @@ mod platform {
 
         let hwnd_value = native.0 as isize;
         let file_path = path_for_winrt(path);
-
-        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(file_path))
-            .map_err(|error| format!("Windows no pudo abrir el PDF temporal: {error}"))?
-            .get()
-            .map_err(|error| format!("Windows no pudo preparar el PDF para compartir: {error}"))?;
 
         SHARE_CONTEXT.with(|slot| -> Result<(), String> {
             let mut slot = slot.borrow_mut();
@@ -193,10 +222,10 @@ mod platform {
 
             {
                 let mut current = context
-                    .current_file
+                    .current_path
                     .lock()
                     .map_err(|_| "No se pudo preparar el PDF para compartir.".to_string())?;
-                *current = Some(file);
+                *current = Some(file_path);
             }
 
             let hwnd = HWND(hwnd_value as *mut c_void);
@@ -204,7 +233,9 @@ mod platform {
                 context
                     .interop
                     .ShowShareUIForWindow(hwnd)
-                    .map_err(|error| format!("Windows no pudo abrir el panel Compartir: {error}"))?;
+                    .map_err(|error| format!(
+                        "Windows no pudo abrir el panel Compartir: {error}"
+                    ))?;
             }
 
             Ok(())
