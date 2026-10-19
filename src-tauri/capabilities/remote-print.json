@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "zgt-remote-print",
-  "description": "Permite a talleres ZEOZ usar únicamente la impresión NIIMBOT nativa",
+  "description": "Permite a talleres ZEOZ usar impresión NIIMBOT y compartir PDFs mediante funciones nativas",
   "windows": ["main"],
   "local": false,
   "remote": {
@@ -13,6 +13,7 @@
     ]
   },
   "permissions": [
-    "allow-print-niimbot-b1-pro"
+    "allow-print-niimbot-b1-pro",
+    "allow-share-pdf-data"
   ]
 }
