@@ -15,3 +15,11 @@ description = "Permite imprimir etiquetas en una NIIMBOT B1 Pro mediante Bluetoo
 commands.allow = [
   "print_niimbot_b1_pro"
 ]
+
+
+[[permission]]
+identifier = "allow-share-pdf-data"
+description = "Permite compartir un PDF generado por ZGT mediante el panel nativo del sistema."
+commands.allow = [
+  "share_pdf_data"
+]
