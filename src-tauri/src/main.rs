@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod niimbot;
+mod share;
 
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, time::Duration};
@@ -25,7 +26,13 @@ const REMEMBER_ME_SCRIPT: &str = r#"
   window.__ZGTNativeNiimbotConnected = false;
   window.ZGTNative = {
     __desktopBridge: true,
-    appVersion: function () { return '0.1.5'; },
+    appVersion: function () { return '0.1.6'; },
+    sharePdfData: function (dataUrl, filename) {
+      return invokeNative('share_pdf_data', {
+        dataUrl: String(dataUrl || ''),
+        filename: String(filename || 'ZGT-Presupuesto.pdf')
+      });
+    },
     printNiimbotB1Pro: function (dataUrl) {
       invokeNative('print_niimbot_b1_pro', { dataUrl: String(dataUrl || '') })
         .catch(function (error) {
@@ -208,6 +215,15 @@ async fn print_niimbot_b1_pro(window: WebviewWindow, data_url: String) -> Result
 }
 
 #[tauri::command]
+async fn share_pdf_data(
+    window: WebviewWindow,
+    data_url: String,
+    filename: String,
+) -> Result<(), String> {
+    share::share_pdf(window, data_url, filename).await
+}
+
+#[tauri::command]
 fn open_workshop(window: WebviewWindow, url: String) -> Result<(), String> {
     let base = normalize_site_url(&url)?;
     let target = Url::parse(&format!("{base}/wp-admin/"))
@@ -226,7 +242,8 @@ fn main() {
             save_link,
             clear_link,
             open_workshop,
-            print_niimbot_b1_pro
+            print_niimbot_b1_pro,
+            share_pdf_data
         ])
         .setup(|app| {
             WebviewWindowBuilder::new(
