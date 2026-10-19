@@ -145,7 +145,7 @@ mod platform {
                     };
 
                     let file = match StorageFile::GetFileFromPathAsync(&HSTRING::from(path))
-                        .and_then(|operation| operation.get())
+                        .and_then(|operation| operation.join())
                     {
                         Ok(file) => file,
                         Err(_) => {
