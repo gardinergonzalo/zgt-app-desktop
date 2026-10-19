@@ -8,6 +8,7 @@ fn main() {
                 "clear_link",
                 "open_workshop",
                 "print_niimbot_b1_pro",
+                "share_pdf_data",
             ]),
         ),
     )
