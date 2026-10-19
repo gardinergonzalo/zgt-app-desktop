@@ -166,7 +166,7 @@ mod platform {
                         }
                     };
 
-                    let items = IIterable::<IStorageItem>::from(vec![item]);
+                    let items = IIterable::<IStorageItem>::from(vec![Some(item)]);
 
                     if let Ok(properties) = data.Properties() {
                         let _ = properties.SetTitle(&HSTRING::from("Compartir PDF de ZGT"));
