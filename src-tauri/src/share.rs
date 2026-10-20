@@ -85,10 +85,9 @@ mod platform {
             Foundation::HWND,
             System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
         },
-        core::{self, GUID, HRESULT, HSTRING, Interface},
     };
     use windows_collections::IIterable;
-    use windows_future::Async;
+    use windows_core::{GUID, HRESULT, HSTRING, Interface};
 
     #[derive(Clone)]
     struct SharePayload {
@@ -99,19 +98,19 @@ mod platform {
     static SHARE_PAYLOAD: OnceLock<Arc<Mutex<Option<SharePayload>>>> = OnceLock::new();
     static SHARE_HANDLER_READY: AtomicBool = AtomicBool::new(false);
 
-    windows::core::imp::define_interface!(
+    windows_core::imp::define_interface!(
         IDataTransferManagerInterop,
         IDataTransferManagerInterop_Vtbl,
         0x3a3dcd6c_3eab_43dc_bcde_45671ce800c8
     );
-    windows::core::imp::interface_hierarchy!(
+    windows_core::imp::interface_hierarchy!(
         IDataTransferManagerInterop,
-        windows::core::IUnknown
+        windows_core::IUnknown
     );
 
     #[repr(C)]
     struct IDataTransferManagerInterop_Vtbl {
-        base__: windows::core::IUnknown_Vtbl,
+        base__: windows_core::IUnknown_Vtbl,
         GetForWindow: unsafe extern "system" fn(
             *mut c_void,
             HWND,
@@ -123,20 +122,28 @@ mod platform {
     }
 
     impl IDataTransferManagerInterop {
-        fn get_for_window(&self, hwnd: HWND) -> windows::core::Result<DataTransferManager> {
+        fn get_for_window(&self, hwnd: HWND) -> windows_core::Result<DataTransferManager> {
             unsafe {
-                let mut result__ = core::mem::zeroed();
+                let mut result__: *mut c_void = std::ptr::null_mut();
                 (Interface::vtable(self).GetForWindow)(
                     Interface::as_raw(self),
                     hwnd,
                     &DataTransferManager::IID,
                     &mut result__,
                 )
-                .and_then(|| windows::core::imp::Type::from_abi(result__))
+                .ok()?;
+
+                if result__.is_null() {
+                    return Err(windows_core::Error::from_hresult(HRESULT(
+                        0x80004003_u32 as i32,
+                    )));
+                }
+
+                Ok(DataTransferManager::from_raw(result__))
             }
         }
 
-        fn show_share_ui_for_window(&self, hwnd: HWND) -> windows::core::Result<()> {
+        fn show_share_ui_for_window(&self, hwnd: HWND) -> windows_core::Result<()> {
             unsafe {
                 (Interface::vtable(self).ShowShareUIForWindow)(
                     Interface::as_raw(self),
@@ -212,10 +219,6 @@ mod platform {
 
         let revoker = manager
             .DataRequested(move |_sender, args| {
-                let Some(args) = windows::core::ref_as_default(&args).as_ref() else {
-                    return;
-                };
-
                 let payload = match state.lock() {
                     Ok(guard) => guard.clone(),
                     Err(_) => None,
@@ -281,7 +284,7 @@ mod platform {
             });
         }
 
-        let interop = windows::core::factory::<DataTransferManager, IDataTransferManagerInterop>()
+        let interop = windows_core::factory::<DataTransferManager, IDataTransferManagerInterop>()
             .map_err(|error| format!("Windows no pudo iniciar el panel Compartir: {error}"))?;
 
         ensure_share_handler(&interop, hwnd)?;
