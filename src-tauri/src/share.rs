@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::WebviewWindow;
@@ -180,7 +180,7 @@ mod platform {
                     .cast()
                     .map_err(|error| format!("No se pudo preparar el archivo para compartir: {error}"))?;
 
-                let items = IIterable::<IStorageItem>::from(vec![item]);
+                let items = IIterable::<IStorageItem>::from(vec![Some(item)]);
 
                 data.SetStorageItems(&items, true)
                     .map_err(|error| format!("Windows no aceptó el PDF para compartir: {error}"))?;
@@ -217,8 +217,11 @@ mod platform {
 
         let state = payload_state();
 
-        let revoker = manager
-            .DataRequested(move |_sender, args| {
+        let _registration_token = manager
+            .DataRequested(move |
+                _sender: windows_core::Ref<'_, DataTransferManager>,
+                args: windows_core::Ref<'_, windows::ApplicationModel::DataTransfer::DataRequestedEventArgs>
+            | {
                 let payload = match state.lock() {
                     Ok(guard) => guard.clone(),
                     Err(_) => None,
@@ -250,9 +253,8 @@ mod platform {
             })
             .map_err(|error| format!("No se pudo preparar Compartir de Windows: {error}"))?;
 
-        // Se registra una sola vez durante la vida de ZGT. El callback lee
-        // siempre el PDF actual desde SHARE_PAYLOAD.
-        revoker.forget();
+        // Windows conserva el callback mientras la fuente del evento siga viva.
+        // El token sólo sería necesario para desregistrarlo explícitamente.
         SHARE_HANDLER_READY.store(true, Ordering::Release);
 
         Ok(())
