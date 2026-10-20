@@ -215,12 +215,12 @@ async fn print_niimbot_b1_pro(window: WebviewWindow, data_url: String) -> Result
 }
 
 #[tauri::command]
-async fn share_pdf_data(
+fn share_pdf_data(
     window: WebviewWindow,
     data_url: String,
     filename: String,
 ) -> Result<(), String> {
-    share::share_pdf(window, data_url, filename).await
+    share::share_pdf(window, data_url, filename)
 }
 
 #[tauri::command]
