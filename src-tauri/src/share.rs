@@ -120,7 +120,7 @@ mod platform {
     );
 
     #[repr(C)]
-    struct IDataTransferManagerInterop_Vtbl {
+    pub struct IDataTransferManagerInterop_Vtbl {
         base__: windows_core::IUnknown_Vtbl,
         GetForWindow: unsafe extern "system" fn(
             *mut c_void,
