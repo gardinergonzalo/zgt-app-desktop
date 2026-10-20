@@ -1,285 +1,336 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tauri::WebviewWindow;
 
+fn clean_filename(filename: &str) -> String {
+    let mut value: String = filename
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.'))
+        .take(140)
+        .collect();
+
+    value = value.trim().trim_matches('.').to_string();
+
+    if value.is_empty() {
+        value = "ZGT-documento.pdf".to_string();
+    }
+
+    if !value.to_lowercase().ends_with(".pdf") {
+        value.push_str(".pdf");
+    }
+
+    value
+}
+
 fn decode_pdf_data_url(data_url: &str) -> Result<Vec<u8>, String> {
-    let encoded = data_url
-        .strip_prefix("data:application/pdf;base64,")
-        .or_else(|| data_url.strip_prefix("data:application/octet-stream;base64,"))
-        .ok_or_else(|| "El PDF recibido no tiene un formato válido.".to_string())?;
+    let comma = data_url
+        .find(',')
+        .ok_or_else(|| "El PDF recibido por ZGT no tiene un formato válido.".to_string())?;
+
+    let header = &data_url[..comma];
+    if !header.starts_with("data:") || !header.to_ascii_lowercase().contains(";base64") {
+        return Err("El PDF recibido por ZGT no está codificado correctamente.".to_string());
+    }
 
     let bytes = STANDARD
-        .decode(encoded)
+        .decode(&data_url[comma + 1..])
         .map_err(|_| "No se pudo decodificar el PDF para compartir.".to_string())?;
 
-    if bytes.len() < 5 || &bytes[..5] != b"%PDF-" {
-        return Err("El archivo recibido no es un PDF válido.".to_string());
+    if bytes.len() < 5 || !bytes.windows(4).take(1024).any(|window| window == b"%PDF") {
+        return Err("El archivo recibido no parece ser un PDF válido.".to_string());
     }
 
     Ok(bytes)
 }
 
-fn safe_filename(value: &str) -> String {
-    let mut name: String = value
-        .trim()
-        .chars()
-        .map(|c| match c {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            c if c.is_control() => '_',
-            c => c,
-        })
-        .collect();
-
-    if name.is_empty() {
-        name = "ZGT-Presupuesto.pdf".to_string();
-    }
-
-    if !name.to_ascii_lowercase().ends_with(".pdf") {
-        name.push_str(".pdf");
-    }
-
-    if name.len() > 180 {
-        name.truncate(176);
-        if !name.to_ascii_lowercase().ends_with(".pdf") {
-            name.push_str(".pdf");
-        }
-    }
-
-    name
-}
-
-fn write_temp_pdf(data_url: &str, filename: &str) -> Result<PathBuf, String> {
+fn save_temp_pdf(data_url: &str, filename: &str) -> Result<PathBuf, String> {
     let bytes = decode_pdf_data_url(data_url)?;
-    let dir = std::env::temp_dir().join("ZGT").join("share");
+    let filename = clean_filename(filename);
+
+    let dir = std::env::temp_dir().join("ZGT").join("Compartir");
     fs::create_dir_all(&dir)
         .map_err(|error| format!("No se pudo preparar el PDF para compartir: {error}"))?;
 
-    let path = dir.join(safe_filename(filename));
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    let path = dir.join(format!("{stamp}-{filename}"));
     fs::write(&path, bytes)
         .map_err(|error| format!("No se pudo guardar temporalmente el PDF: {error}"))?;
 
-    path.canonicalize()
-        .map_err(|error| format!("No se pudo preparar la ruta del PDF: {error}"))
+    Ok(path)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 mod platform {
     use super::*;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::{
-        cell::RefCell,
         ffi::c_void,
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Mutex, OnceLock,
+        },
     };
     use windows::{
-        ApplicationModel::DataTransfer::{
-            DataPackageOperation, DataRequestedEventArgs, DataTransferManager,
-        },
-        Foundation::TypedEventHandler,
+        ApplicationModel::DataTransfer::{DataPackageOperation, DataTransferManager},
         Storage::{IStorageItem, StorageFile},
         Win32::{
             Foundation::HWND,
-            UI::Shell::IDataTransferManagerInterop,
+            System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
         },
-        core::{factory, HSTRING, Interface},
+        core::{self, GUID, HRESULT, HSTRING, Interface},
     };
     use windows_collections::IIterable;
+    use windows_future::Async;
 
-    struct ShareContext {
-        hwnd: isize,
-        interop: IDataTransferManagerInterop,
-        manager: DataTransferManager,
-        data_requested_token: i64,
-        current_path: Arc<Mutex<Option<String>>>,
+    #[derive(Clone)]
+    struct SharePayload {
+        path: String,
+        filename: String,
     }
 
-    impl Drop for ShareContext {
-        fn drop(&mut self) {
-            let _ = self.manager.RemoveDataRequested(self.data_requested_token);
+    static SHARE_PAYLOAD: OnceLock<Arc<Mutex<Option<SharePayload>>>> = OnceLock::new();
+    static SHARE_HANDLER_READY: AtomicBool = AtomicBool::new(false);
+
+    windows::core::imp::define_interface!(
+        IDataTransferManagerInterop,
+        IDataTransferManagerInterop_Vtbl,
+        0x3a3dcd6c_3eab_43dc_bcde_45671ce800c8
+    );
+    windows::core::imp::interface_hierarchy!(
+        IDataTransferManagerInterop,
+        windows::core::IUnknown
+    );
+
+    #[repr(C)]
+    struct IDataTransferManagerInterop_Vtbl {
+        base__: windows::core::IUnknown_Vtbl,
+        GetForWindow: unsafe extern "system" fn(
+            *mut c_void,
+            HWND,
+            *const GUID,
+            *mut *mut c_void,
+        ) -> HRESULT,
+        ShowShareUIForWindow:
+            unsafe extern "system" fn(*mut c_void, HWND) -> HRESULT,
+    }
+
+    impl IDataTransferManagerInterop {
+        fn get_for_window(&self, hwnd: HWND) -> windows::core::Result<DataTransferManager> {
+            unsafe {
+                let mut result__ = core::mem::zeroed();
+                (Interface::vtable(self).GetForWindow)(
+                    Interface::as_raw(self),
+                    hwnd,
+                    &DataTransferManager::IID,
+                    &mut result__,
+                )
+                .and_then(|| windows::core::imp::Type::from_abi(result__))
+            }
+        }
+
+        fn show_share_ui_for_window(&self, hwnd: HWND) -> windows::core::Result<()> {
+            unsafe {
+                (Interface::vtable(self).ShowShareUIForWindow)(
+                    Interface::as_raw(self),
+                    hwnd,
+                )
+                .ok()
+            }
         }
     }
 
-    thread_local! {
-        static SHARE_CONTEXT: RefCell<Option<ShareContext>> = const { RefCell::new(None) };
+    fn payload_state() -> Arc<Mutex<Option<SharePayload>>> {
+        SHARE_PAYLOAD
+            .get_or_init(|| Arc::new(Mutex::new(None)))
+            .clone()
     }
 
-    fn path_for_winrt(path: &Path) -> String {
-        let value = path.to_string_lossy().to_string();
-        value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+    fn set_package_file(
+        data: windows::ApplicationModel::DataTransfer::DataPackage,
+        request: windows::ApplicationModel::DataTransfer::DataRequest,
+        deferral: windows::ApplicationModel::DataTransfer::DataRequestDeferral,
+        payload: SharePayload,
+    ) {
+        std::thread::spawn(move || {
+            let initialized = unsafe { RoInitialize(RO_INIT_MULTITHREADED).is_ok() };
+
+            let result: Result<(), String> = (|| {
+                let path = HSTRING::from(payload.path.clone());
+                let file = StorageFile::GetFileFromPathAsync(&path)
+                    .map_err(|error| format!("No se pudo abrir el PDF temporal: {error}"))?
+                    .join()
+                    .map_err(|error| format!("No se pudo preparar el PDF: {error}"))?;
+
+                let item: IStorageItem = file
+                    .cast()
+                    .map_err(|error| format!("No se pudo preparar el archivo para compartir: {error}"))?;
+
+                let items = IIterable::<IStorageItem>::from(vec![item]);
+
+                data.SetStorageItems(&items, true)
+                    .map_err(|error| format!("Windows no aceptó el PDF para compartir: {error}"))?;
+
+                data.SetRequestedOperation(DataPackageOperation::Copy)
+                    .map_err(|error| format!("No se pudo preparar la operación de compartir: {error}"))?;
+
+                Ok(())
+            })();
+
+            if let Err(message) = result {
+                let _ = request.FailWithDisplayText(&HSTRING::from(message));
+            }
+
+            let _ = deferral.Complete();
+
+            if initialized {
+                unsafe { RoUninitialize() };
+            }
+        });
     }
 
-    fn build_context(hwnd_value: isize) -> Result<ShareContext, String> {
-        let hwnd = HWND(hwnd_value as *mut c_void);
+    fn ensure_share_handler(
+        interop: &IDataTransferManagerInterop,
+        hwnd: HWND,
+    ) -> Result<(), String> {
+        if SHARE_HANDLER_READY.load(Ordering::Acquire) {
+            return Ok(());
+        }
 
-        let interop: IDataTransferManagerInterop =
-            factory::<DataTransferManager, IDataTransferManagerInterop>()
-                .map_err(|error| format!("Windows no pudo iniciar el panel Compartir: {error}"))?;
+        let manager = interop
+            .get_for_window(hwnd)
+            .map_err(|error| format!("No se pudo iniciar el panel Compartir de Windows: {error}"))?;
 
-        let manager: DataTransferManager = unsafe {
-            interop
-                .GetForWindow(hwnd)
-                .map_err(|error| format!(
-                    "Windows no pudo asociar el panel Compartir a ZGT: {error}"
-                ))?
+        let state = payload_state();
+
+        let revoker = manager
+            .DataRequested(move |_sender, args| {
+                let Some(args) = windows::core::ref_as_default(&args).as_ref() else {
+                    return;
+                };
+
+                let payload = match state.lock() {
+                    Ok(guard) => guard.clone(),
+                    Err(_) => None,
+                };
+
+                let Some(payload) = payload else {
+                    return;
+                };
+
+                let Ok(request) = args.Request() else {
+                    return;
+                };
+                let Ok(data) = request.Data() else {
+                    return;
+                };
+
+                if let Ok(properties) = data.Properties() {
+                    let _ = properties.SetTitle(&HSTRING::from(payload.filename.clone()));
+                    let _ = properties.SetDescription(&HSTRING::from(
+                        "Documento PDF generado por ZGT",
+                    ));
+                }
+
+                let Ok(deferral) = request.GetDeferral() else {
+                    return;
+                };
+
+                set_package_file(data, request, deferral, payload);
+            })
+            .map_err(|error| format!("No se pudo preparar Compartir de Windows: {error}"))?;
+
+        // Se registra una sola vez durante la vida de ZGT. El callback lee
+        // siempre el PDF actual desde SHARE_PAYLOAD.
+        revoker.forget();
+        SHARE_HANDLER_READY.store(true, Ordering::Release);
+
+        Ok(())
+    }
+
+    fn share_on_ui_thread(
+        window: WebviewWindow,
+        path: PathBuf,
+        filename: String,
+    ) -> Result<(), String> {
+        let raw = window
+            .window_handle()
+            .map_err(|error| format!("No se pudo identificar la ventana de ZGT: {error}"))?
+            .as_raw();
+
+        let hwnd = match raw {
+            RawWindowHandle::Win32(handle) => HWND(handle.hwnd.get() as *mut c_void),
+            _ => return Err("La ventana actual no es una ventana de Windows.".to_string()),
         };
 
-        let current_path = Arc::new(Mutex::new(None::<String>));
-        let path_for_event = Arc::clone(&current_path);
+        let state = payload_state();
+        {
+            let mut guard = state
+                .lock()
+                .map_err(|_| "No se pudo preparar el PDF para compartir.".to_string())?;
+            *guard = Some(SharePayload {
+                path: path.to_string_lossy().to_string(),
+                filename,
+            });
+        }
 
-        let handler =
-            TypedEventHandler::<DataTransferManager, DataRequestedEventArgs>::new(
-                move |_sender, args| {
-                    let args = args.ok()?;
-                    let request = args.Request()?;
-                    let data = request.Data()?;
+        let interop = windows::core::factory::<DataTransferManager, IDataTransferManagerInterop>()
+            .map_err(|error| format!("Windows no pudo iniciar el panel Compartir: {error}"))?;
 
-                    let path = path_for_event
-                        .lock()
-                        .ok()
-                        .and_then(|guard| guard.clone());
-
-                    let Some(path) = path else {
-                        let _ = request.FailWithDisplayText(&HSTRING::from(
-                            "ZGT no pudo preparar el PDF para compartir.",
-                        ));
-                        return Ok(());
-                    };
-
-                    let file = match StorageFile::GetFileFromPathAsync(&HSTRING::from(path))
-                        .and_then(|operation| operation.join())
-                    {
-                        Ok(file) => file,
-                        Err(_) => {
-                            let _ = request.FailWithDisplayText(&HSTRING::from(
-                                "Windows no pudo abrir el PDF generado por ZGT.",
-                            ));
-                            return Ok(());
-                        }
-                    };
-
-                    let item = match file.cast::<IStorageItem>() {
-                        Ok(item) => item,
-                        Err(_) => {
-                            let _ = request.FailWithDisplayText(&HSTRING::from(
-                                "Windows no pudo adjuntar el PDF.",
-                            ));
-                            return Ok(());
-                        }
-                    };
-
-                    let items = IIterable::<IStorageItem>::from(vec![Some(item)]);
-
-                    if let Ok(properties) = data.Properties() {
-                        let _ = properties.SetTitle(&HSTRING::from("Compartir PDF de ZGT"));
-                        let _ = properties.SetDescription(&HSTRING::from(
-                            "Documento generado por ZEOZ Gestión Taller",
-                        ));
-                    }
-
-                    data.SetRequestedOperation(DataPackageOperation::Copy)?;
-                    data.SetStorageItemsReadOnly(&items)?;
-                    Ok(())
-                },
-            );
-
-        let token = manager
-            .DataRequested(&handler)
-            .map_err(|error| format!(
-                "No se pudo preparar el contenido para compartir: {error}"
-            ))?;
-
-        Ok(ShareContext {
-            hwnd: hwnd_value,
-            interop,
-            manager,
-            data_requested_token: token,
-            current_path,
-        })
+        ensure_share_handler(&interop, hwnd)?;
+        interop
+            .show_share_ui_for_window(hwnd)
+            .map_err(|error| format!("No se pudo abrir el panel Compartir de Windows: {error}"))
     }
 
-    fn show_share_sheet(window: &WebviewWindow, path: &Path) -> Result<(), String> {
-        let native = window
-            .hwnd()
-            .map_err(|error| format!("No se pudo obtener la ventana de ZGT: {error}"))?;
-
-        let hwnd_value = native.0 as isize;
-        let file_path = path_for_winrt(path);
-
-        SHARE_CONTEXT.with(|slot| -> Result<(), String> {
-            let mut slot = slot.borrow_mut();
-
-            let needs_rebuild = slot
-                .as_ref()
-                .map(|context| context.hwnd != hwnd_value)
-                .unwrap_or(true);
-
-            if needs_rebuild {
-                *slot = Some(build_context(hwnd_value)?);
-            }
-
-            let context = slot
-                .as_mut()
-                .ok_or_else(|| "No se pudo iniciar el panel Compartir.".to_string())?;
-
-            {
-                let mut current = context
-                    .current_path
-                    .lock()
-                    .map_err(|_| "No se pudo preparar el PDF para compartir.".to_string())?;
-                *current = Some(file_path);
-            }
-
-            let hwnd = HWND(hwnd_value as *mut c_void);
-            unsafe {
-                context
-                    .interop
-                    .ShowShareUIForWindow(hwnd)
-                    .map_err(|error| format!(
-                        "Windows no pudo abrir el panel Compartir: {error}"
-                    ))?;
-            }
-
-            Ok(())
-        })
-    }
-
-    pub async fn share_pdf(
+    pub fn share_pdf(
         window: WebviewWindow,
         data_url: String,
         filename: String,
     ) -> Result<(), String> {
-        let path = write_temp_pdf(&data_url, &filename)?;
-        let window_for_ui = window.clone();
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let safe_name = super::clean_filename(&filename);
+        let path = super::save_temp_pdf(&data_url, &safe_name)?;
+
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let ui_window = window.clone();
 
         window
             .run_on_main_thread(move || {
-                let result = show_share_sheet(&window_for_ui, &path);
-                let _ = tx.send(result);
+                let result = share_on_ui_thread(ui_window, path, safe_name);
+                let _ = sender.send(result);
             })
-            .map_err(|error| format!("No se pudo abrir el panel Compartir: {error}"))?;
+            .map_err(|error| format!("No se pudo abrir Compartir de Windows: {error}"))?;
 
-        rx.recv_timeout(std::time::Duration::from_secs(8))
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(8))
             .map_err(|_| "Windows tardó demasiado en abrir el panel Compartir.".to_string())?
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(windows))]
 mod platform {
     use super::*;
 
-    pub async fn share_pdf(
+    pub fn share_pdf(
         _window: WebviewWindow,
         _data_url: String,
         _filename: String,
     ) -> Result<(), String> {
-        Err("Compartir PDF mediante el panel nativo está disponible en Windows.".to_string())
+        Err("Compartir PDF desde ZGT Desktop está disponible actualmente en Windows.".to_string())
     }
 }
 
-pub async fn share_pdf(
+pub fn share_pdf(
     window: WebviewWindow,
     data_url: String,
     filename: String,
 ) -> Result<(), String> {
-    platform::share_pdf(window, data_url, filename).await
+    platform::share_pdf(window, data_url, filename)
 }
