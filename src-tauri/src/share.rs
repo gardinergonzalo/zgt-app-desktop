@@ -79,7 +79,10 @@ mod platform {
         },
     };
     use windows::{
-        ApplicationModel::DataTransfer::{DataPackageOperation, DataTransferManager},
+        ApplicationModel::DataTransfer::{
+            DataPackageOperation, DataRequestedEventArgs, DataTransferManager,
+        },
+        Foundation::TypedEventHandler,
         Storage::{IStorageItem, StorageFile},
         Win32::{
             Foundation::HWND,
@@ -97,6 +100,14 @@ mod platform {
 
     static SHARE_PAYLOAD: OnceLock<Arc<Mutex<Option<SharePayload>>>> = OnceLock::new();
     static SHARE_HANDLER_READY: AtomicBool = AtomicBool::new(false);
+
+    thread_local! {
+        static SHARE_REGISTRATION: std::cell::RefCell<Option<(
+            DataTransferManager,
+            i64,
+            TypedEventHandler<DataTransferManager, DataRequestedEventArgs>,
+        )>> = std::cell::RefCell::new(None);
+    }
 
     windows_core::imp::define_interface!(
         IDataTransferManagerInterop,
@@ -217,46 +228,57 @@ mod platform {
 
         let state = payload_state();
 
-        let _registration_token = manager
-            .DataRequested(move |
-                _sender: windows_core::Ref<'_, DataTransferManager>,
-                args: windows_core::Ref<'_, windows::ApplicationModel::DataTransfer::DataRequestedEventArgs>
-            | {
-                let payload = match state.lock() {
-                    Ok(guard) => guard.clone(),
-                    Err(_) => None,
-                };
+        let handler =
+            TypedEventHandler::<DataTransferManager, DataRequestedEventArgs>::new(
+                move |_sender, args| {
+                    let Some(args) = args.as_ref() else {
+                        return Ok(());
+                    };
 
-                let Some(payload) = payload else {
-                    return;
-                };
+                    let payload = match state.lock() {
+                        Ok(guard) => guard.clone(),
+                        Err(_) => None,
+                    };
 
-                let Ok(request) = args.Request() else {
-                    return;
-                };
-                let Ok(data) = request.Data() else {
-                    return;
-                };
+                    let Some(payload) = payload else {
+                        return Ok(());
+                    };
 
-                if let Ok(properties) = data.Properties() {
-                    let _ = properties.SetTitle(&HSTRING::from(payload.filename.clone()));
-                    let _ = properties.SetDescription(&HSTRING::from(
-                        "Documento PDF generado por ZGT",
-                    ));
-                }
+                    let Ok(request) = args.Request() else {
+                        return Ok(());
+                    };
+                    let Ok(data) = request.Data() else {
+                        return Ok(());
+                    };
 
-                let Ok(deferral) = request.GetDeferral() else {
-                    return;
-                };
+                    if let Ok(properties) = data.Properties() {
+                        let _ = properties.SetTitle(&HSTRING::from(payload.filename.clone()));
+                        let _ = properties.SetDescription(&HSTRING::from(
+                            "Documento PDF generado por ZGT",
+                        ));
+                    }
 
-                set_package_file(data, request, deferral, payload);
-            })
+                    let Ok(deferral) = request.GetDeferral() else {
+                        return Ok(());
+                    };
+
+                    set_package_file(data, request, deferral, payload);
+                    Ok(())
+                },
+            );
+
+        let token = manager
+            .DataRequested(&handler)
             .map_err(|error| format!("No se pudo preparar Compartir de Windows: {error}"))?;
 
-        // Windows conserva el callback mientras la fuente del evento siga viva.
-        // El token sólo sería necesario para desregistrarlo explícitamente.
-        SHARE_HANDLER_READY.store(true, Ordering::Release);
+        // Conservamos el DataTransferManager y el delegate durante toda la vida
+        // de la ventana. Sin esto, Windows puede perder el callback antes de
+        // disparar DataRequested.
+        SHARE_REGISTRATION.with(|registration| {
+            *registration.borrow_mut() = Some((manager, token, handler));
+        });
 
+        SHARE_HANDLER_READY.store(true, Ordering::Release);
         Ok(())
     }
 
